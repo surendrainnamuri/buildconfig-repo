@@ -1,0 +1,104 @@
+apiVersion: image.openshift.io/v1
+kind: ImageStream
+metadata:
+  name: hotel-booking
+  labels: { app: hotel-booking }
+---
+apiVersion: build.openshift.io/v1
+kind: BuildConfig
+metadata:
+  name: hotel-booking
+  labels: { app: hotel-booking }
+spec:
+  runPolicy: Serial
+  source:
+    type: Git
+    git:
+      uri: REPLACE_WITH_YOUR_GITHUB_REPOSITORY_URL
+      ref: main
+  strategy:
+    type: Docker
+    dockerStrategy:
+      dockerfilePath: Dockerfile
+  output:
+    to:
+      kind: ImageStreamTag
+      name: hotel-booking:latest
+  triggers:
+    - type: ConfigChange
+    - type: GitHub
+      github:
+        secretReference:
+          name: hotel-booking-webhook-secret
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: hotel-booking-webhook-secret
+  labels: { app: hotel-booking }
+type: Opaque
+stringData:
+  WebHookSecretKey: replace-with-a-random-secret
+---
+apiVersion: apps.openshift.io/v1
+kind: DeploymentConfig
+metadata:
+  name: hotel-booking
+  labels: { app: hotel-booking }
+spec:
+  replicas: 1
+  selector: { app: hotel-booking, deploymentconfig: hotel-booking }
+  strategy:
+    type: Rolling
+  template:
+    metadata:
+      labels: { app: hotel-booking, deploymentconfig: hotel-booking }
+    spec:
+      containers:
+        - name: hotel-booking
+          image: hotel-booking:latest
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { cpu: 200m, memory: 128Mi }
+  triggers:
+    - type: ConfigChange
+    - type: ImageChange
+      imageChangeParams:
+        automatic: true
+        containerNames: [hotel-booking]
+        from: { kind: ImageStreamTag, name: hotel-booking:latest }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hotel-booking
+  labels: { app: hotel-booking }
+spec:
+  selector: { app: hotel-booking, deploymentconfig: hotel-booking }
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: hotel-booking
+  labels: { app: hotel-booking }
+spec:
+  to: { kind: Service, name: hotel-booking }
+  port: { targetPort: http }
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
